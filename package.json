@@ -1,6 +1,6 @@
 {
   "name": "deep-device-access",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Maximum device access plugin for Capacitor - get contacts, location, apps, sensors, and more",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",

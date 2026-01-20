@@ -54,62 +54,86 @@ class DeepDeviceAccessPlugin : Plugin() {
     @PluginMethod
     fun requestAllPermissions(call: PluginCall) {
         try {
+            // Build a list of actual Android permissions 
             val permissionsToRequest = mutableListOf<String>()
             
-            // Always request these permissions
-            permissionsToRequest.add("location")
-            permissionsToRequest.add("contacts")
-            permissionsToRequest.add("phoneState")
+            // Core permissions
+            permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
+            permissionsToRequest.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            permissionsToRequest.add(Manifest.permission.READ_CONTACTS)
+            permissionsToRequest.add(Manifest.permission.READ_PHONE_STATE)
             
-            // Add media permissions based on Android version
+            // Media permissions based on Android version
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                permissionsToRequest.add("mediaImages")
+                permissionsToRequest.add(Manifest.permission.READ_MEDIA_IMAGES)
             } else {
-                permissionsToRequest.add("storage")
+                permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
             
-            // Add Bluetooth permissions for Android 12+
+            // Bluetooth permissions for Android 12+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                permissionsToRequest.add("bluetoothConnect")
-                permissionsToRequest.add("bluetoothScan")
+                permissionsToRequest.add(Manifest.permission.BLUETOOTH_CONNECT)
+                permissionsToRequest.add(Manifest.permission.BLUETOOTH_SCAN)
             }
             
-            // Request all permissions using aliases
-            requestPermissionForAliases(permissionsToRequest.toTypedArray(), call, "permissionsCallback")
+            // Filter out already granted permissions
+            val notGranted = permissionsToRequest.filter { 
+                context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED 
+            }
+            
+            if (notGranted.isEmpty()) {
+                val result = JSObject()
+                result.put("allGranted", true)
+                result.put("message", "All permissions already granted")
+                call.resolve(result)
+            } else {
+                // Request permissions directly using Activity
+                activity.requestPermissions(notGranted.toTypedArray(), REQUEST_CODE_ALL_PERMISSIONS)
+                
+                // Save the call to resolve later
+                savedPermissionCall = call
+            }
         } catch (e: Exception) {
             call.reject("Error requesting permissions: ${e.message}")
         }
     }
     
-    @PermissionCallback
-    private fun permissionsCallback(call: PluginCall) {
-        val result = JSObject()
+    companion object {
+        private const val REQUEST_CODE_ALL_PERMISSIONS = 9999
+        private var savedPermissionCall: PluginCall? = null
+    }
+    
+    override fun handleRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.handleRequestPermissionsResult(requestCode, permissions, grantResults)
         
-        // Check which permissions were granted
-        val locationGranted = getPermissionState("location") == com.getcapacitor.PermissionState.GRANTED
-        val contactsGranted = getPermissionState("contacts") == com.getcapacitor.PermissionState.GRANTED
-        val phoneStateGranted = getPermissionState("phoneState") == com.getcapacitor.PermissionState.GRANTED
-        
-        var mediaGranted = false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            mediaGranted = getPermissionState("mediaImages") == com.getcapacitor.PermissionState.GRANTED
-        } else {
-            mediaGranted = getPermissionState("storage") == com.getcapacitor.PermissionState.GRANTED
+        if (requestCode == REQUEST_CODE_ALL_PERMISSIONS && savedPermissionCall != null) {
+            val result = JSObject()
+            val granted = grantResults.count { it == PackageManager.PERMISSION_GRANTED }
+            
+            result.put("totalRequested", permissions.size)
+            result.put("totalGranted", granted)
+            result.put("allGranted", granted == permissions.size)
+            
+            // Add details for each permission type
+            result.put("location", context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED)
+            result.put("contacts", context.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED)
+            result.put("phoneState", context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED)
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                result.put("media", context.checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED)
+            } else {
+                result.put("media", context.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED)
+            }
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                result.put("bluetooth", context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED)
+            } else {
+                result.put("bluetooth", true)
+            }
+            
+            savedPermissionCall?.resolve(result)
+            savedPermissionCall = null
         }
-        
-        var bluetoothGranted = true
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            bluetoothGranted = getPermissionState("bluetoothConnect") == com.getcapacitor.PermissionState.GRANTED
-        }
-        
-        result.put("location", locationGranted)
-        result.put("contacts", contactsGranted)
-        result.put("phoneState", phoneStateGranted)
-        result.put("media", mediaGranted)
-        result.put("bluetooth", bluetoothGranted)
-        result.put("allGranted", locationGranted && contactsGranted && phoneStateGranted && mediaGranted && bluetoothGranted)
-        
-        call.resolve(result)
     }
 
     @PluginMethod
@@ -681,7 +705,8 @@ class DeepDeviceAccessPlugin : Plugin() {
                 count++
             }
         }
-    } 
+    }
+
 
     // Helper functions
     private data class CPUFrequency(val current: Long, val min: Long, val max: Long)
